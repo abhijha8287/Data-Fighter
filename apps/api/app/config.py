@@ -27,6 +27,15 @@ class Settings(BaseSettings):
 
     checkpoint_db_path: str = "./data-firefighter-checkpoints.db"
 
+    # Comma-separated. Next.js dev picks the next free port (3000, 3001, ...)
+    # if the default is already in use — cover the common range rather than
+    # hardcoding one port that a stray process elsewhere can silently break.
+    frontend_origins: str = "http://localhost:3000,http://localhost:3001,http://localhost:3002"
+
+    @property
+    def frontend_origins_list(self) -> list[str]:
+        return [o.strip() for o in self.frontend_origins.split(",") if o.strip()]
+
     fixture_dir: Path = REPO_ROOT / "examples" / "incidents" / "customer_email_deletion"
 
 

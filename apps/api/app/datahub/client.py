@@ -76,41 +76,47 @@ class CachingDataHubClient(DataHubClient):
         self._inner = inner
         self._cache: dict[tuple, object] = {}
 
-    async def _memoize(self, key: tuple, coro):
+    async def _memoize(self, key: tuple, make_coro):
+        # `make_coro` is a zero-arg callable, not a coroutine, so the
+        # underlying call only happens on a cache miss — passing an
+        # already-created coroutine here would construct it (and, for a
+        # real client, potentially fire the network call) even on a hit.
         if key not in self._cache:
-            self._cache[key] = await coro
+            self._cache[key] = await make_coro()
         return self._cache[key]
 
     async def get_dataset(self, urn: str) -> dict:
-        return await self._memoize(("get_dataset", urn), self._inner.get_dataset(urn))
+        return await self._memoize(("get_dataset", urn), lambda: self._inner.get_dataset(urn))
 
     async def get_schema(self, urn: str, *, before_incident: bool = False) -> list[SchemaField]:
         return await self._memoize(
             ("get_schema", urn, before_incident),
-            self._inner.get_schema(urn, before_incident=before_incident),
+            lambda: self._inner.get_schema(urn, before_incident=before_incident),
         )
 
     async def get_lineage(self, urn: str, direction: str = "DOWNSTREAM", hops: int = 5) -> dict:
         return await self._memoize(
             ("get_lineage", urn, direction, hops),
-            self._inner.get_lineage(urn, direction=direction, hops=hops),
+            lambda: self._inner.get_lineage(urn, direction=direction, hops=hops),
         )
 
     async def get_lineage_paths_between(self, source_urn: str, dest_urn: str) -> dict:
         return await self._memoize(
             ("get_lineage_paths_between", source_urn, dest_urn),
-            self._inner.get_lineage_paths_between(source_urn, dest_urn),
+            lambda: self._inner.get_lineage_paths_between(source_urn, dest_urn),
         )
 
     async def get_owners(self, urn: str) -> list[dict]:
-        return await self._memoize(("get_owners", urn), self._inner.get_owners(urn))
+        return await self._memoize(("get_owners", urn), lambda: self._inner.get_owners(urn))
 
     async def search_datasets(self, query: str) -> list[dict]:
-        return await self._memoize(("search_datasets", query), self._inner.search_datasets(query))
+        return await self._memoize(
+            ("search_datasets", query), lambda: self._inner.search_datasets(query)
+        )
 
     async def get_dataset_queries(self, urn: str) -> list[str]:
         return await self._memoize(
-            ("get_dataset_queries", urn), self._inner.get_dataset_queries(urn)
+            ("get_dataset_queries", urn), lambda: self._inner.get_dataset_queries(urn)
         )
 
     async def add_incident_note(self, urn: str, note: str) -> bool:

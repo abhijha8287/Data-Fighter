@@ -292,6 +292,7 @@ name = "data-firefighter-api"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "aiosqlite" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "langchain-anthropic" },
@@ -315,6 +316,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiosqlite", specifier = ">=0.22.1" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "langchain-anthropic", specifier = ">=0.3.0" },

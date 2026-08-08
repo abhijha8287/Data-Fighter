@@ -1,0 +1,218 @@
+# Data Firefighter
+
+**Autonomous data incident response, built on DataHub's context graph.**
+
+When a column disappears from a dataset, Data Firefighter investigates the
+blast radius, finds the root cause, proposes a fix grounded in the actual
+affected code, and opens a real GitHub PR — pausing for human approval
+before it touches anything.
+
+Built for **Build with DataHub: The Agent Hackathon**.
+
+---
+
+## Problem
+
+A schema change on one dataset silently breaks every pipeline, dashboard,
+and ML model downstream of it. Today, finding out what broke and why is a
+manual, multi-tool investigation. Data Firefighter automates that
+investigation end-to-end using DataHub as its context graph — not a search
+box the agent occasionally queries, but the actual source of lineage,
+schema, and ownership it reasons over.
+
+## Solution
+
+An 11-node [LangGraph](https://langchain-ai.github.io/langgraph/) agent:
+
+```
+detect_incident → fetch_context → trace_lineage → analyze_blast_radius →
+identify_owners → investigate_root_cause → generate_fix → validate_fix →
+create_pull_request → write_incident_report → write_back_to_datahub
+```
+
+The graph is **human-checkpointed, not fully autonomous**: it investigates
+and proposes a fix on its own, but pauses for explicit approval before it
+ever touches GitHub. This mirrors the hackathon brief's own principle that
+PR creation — not direct production changes — should be the agent's
+default action.
+
+## Why DataHub
+
+DataHub is the agent's context graph at every stage:
+
+- **Schema** — `list_schema_fields` / `get_entities` to know exactly what
+  changed on the incident dataset.
+- **Lineage** — `get_lineage` to trace every downstream pipeline,
+  dashboard, and ML model affected — the blast radius is *calculated* from
+  real graph traversal, never hardcoded.
+- **Ownership** — resolved per-asset so the right teams are identified.
+- **Query metadata** — `get_dataset_queries` grounds root-cause claims in
+  real SQL, cross-referenced against a live GitHub code search so the
+  agent never blames a file that isn't actually broken.
+- **Write-back** — resolved incidents get written back to DataHub
+  (`update_description`/`save_document`, gated behind
+  `DATAHUB_MUTATION_ENABLED` and the server's own
+  `TOOLS_IS_MUTATION_ENABLED`), so the next agent or engineer inherits the
+  investigation instead of repeating it.
+
+## Architecture
+
+```
+data-firefighter/
+├── apps/
+│   ├── api/                  # FastAPI + LangGraph backend
+│   │   └── app/
+│   │       ├── api/          # 7 endpoints, mapped to graph checkpoints
+│   │       ├── agents/       # graph.py, nodes.py, llm.py, sql_fix.py
+│   │       ├── datahub/      # DataHubClient: mock + real, same interface
+│   │       ├── github/       # GitHubService (scoped to one demo repo)
+│   │       └── incidents/    # IncidentState
+│   └── web/                  # Next.js single-page dashboard
+├── examples/incidents/customer_email_deletion/
+│                              # single source of truth: the SQL fixtures
+│                              # here back BOTH the mock DataHub client
+│                              # and the seeded demo GitHub repo
+└── TODOS.md                  # deliberately deferred scope, with context
+```
+
+## Agent workflow
+
+Three checkpoints, mapped onto three API calls a human explicitly triggers:
+
+| Endpoint | Nodes run | What it does |
+|---|---|---|
+| `POST /api/incidents/demo` | `detect_incident` | Starts the incident |
+| `POST /api/incidents/{id}/investigate` | `fetch_context` … `investigate_root_cause` | Reads DataHub, traces lineage, computes blast radius, grounds root cause in real code search |
+| `POST /api/incidents/{id}/remediate` | `generate_fix`, `validate_fix` | Proposes a fix (SQL transform, not LLM-freehand), validates it — **does not touch GitHub yet** |
+| `POST /api/incidents/{id}/create-pr` | `create_pull_request` … `write_back_to_datahub` | The approval checkpoint: only after this call does anything write to GitHub or DataHub |
+
+State persists across these calls via LangGraph's `AsyncSqliteSaver`
+checkpointer, keyed by `thread_id=incident_id`.
+
+## Demo
+
+1. Open the dashboard, click **Column Deleted** under Simulate Incident.
+2. Investigation runs automatically (read-only — no writes) and shows the
+   real blast radius: downstream pipelines, dashboards, an ML model, and
+   the teams that own them.
+3. Click **Generate Fix** — review the real before/after SQL diff and
+   validation checklist.
+4. Click **Approve & Create PR** — a real branch, commit, and PR land on
+   your configured GitHub repo. The incident resolves; DataHub write-back
+   is attempted (visibly marked if disabled, never faked).
+
+## Tech stack
+
+- **Backend:** Python, FastAPI, LangGraph, Pydantic, `sqlglot`
+- **Frontend:** Next.js, TypeScript, Tailwind CSS
+- **LLM:** OpenAI or Anthropic, switched via `LLM_PROVIDER`
+- **Persistence:** LangGraph `AsyncSqliteSaver` (no Postgres/SQLAlchemy in
+  this build — see `TODOS.md` for why and what it'd take to add)
+
+## Setup
+
+### 1. Backend
+
+```bash
+cd apps/api
+cp ../../.env.example .env   # fill in the values below
+uv sync
+uv run uvicorn app.main:app --reload --port 8000
+```
+
+### 2. Frontend
+
+```bash
+cd apps/web
+cp .env.local.example .env.local
+npm install
+npm run dev
+```
+
+Next.js picks the next free port if 3000 is taken — check the terminal
+output for the actual URL, and update `FRONTEND_ORIGINS` in the backend's
+`.env` (comma-separated) if you're not on 3000/3001/3002.
+
+### 3. Environment variables
+
+| Variable | Required | Notes |
+|---|---|---|
+| `LLM_PROVIDER` | yes | `openai` or `anthropic` |
+| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | yes (one) | matching your provider |
+| `DATAHUB_MODE` | no | `mock` (default) or `real` |
+| `DATAHUB_GMS_URL` / `DATAHUB_GMS_TOKEN` | only if `DATAHUB_MODE=real` | |
+| `DATAHUB_MUTATION_ENABLED` | no | app-side write-back gate; the DataHub MCP server's own `TOOLS_IS_MUTATION_ENABLED` must **also** be `true` for a real write to land |
+| `GITHUB_TOKEN` | **yes** | needed even in `DATAHUB_MODE=mock` — the agent always searches/PRs against a real repo |
+| `GITHUB_DEMO_REPO` | **yes** | `owner/repo` — a throwaway repo you control, seeded with the files in `examples/incidents/customer_email_deletion/` |
+
+### 4. DataHub setup
+
+Default mode (`DATAHUB_MODE=mock`) needs no DataHub instance — the agent
+runs against realistic fixture data with the exact same `DataHubClient`
+interface a real instance would use.
+
+To run against a real instance:
+
+```bash
+python3 -m datahub docker quickstart   # official DataHub quickstart
+```
+
+Then set `DATAHUB_MODE=real`, `DATAHUB_GMS_URL=http://localhost:8080`, and
+a personal access token as `DATAHUB_GMS_TOKEN`.
+
+### 5. GitHub setup
+
+1. Create a throwaway repo (e.g. `you/data-firefighter-demo`).
+2. Copy the `.sql` files from `examples/incidents/customer_email_deletion/`
+   into it and push. **Wait 1-2 minutes** before running the demo — GitHub's
+   code search index has real propagation lag after a push.
+3. Set `GITHUB_TOKEN` (a personal access token with repo scope) and
+   `GITHUB_DEMO_REPO=you/data-firefighter-demo`.
+
+### 6. Trigger the demo incident
+
+With both servers running, open the frontend and click **Column Deleted**.
+Or via `curl`:
+
+```bash
+curl -X POST http://localhost:8000/api/incidents/demo
+```
+
+### 7. Run the tests
+
+```bash
+cd apps/api
+uv run pytest        # 52 tests: unit, API, full-graph e2e, golden-file eval
+```
+
+## What's genuinely real vs. mocked
+
+- **Real, always:** GitHub branch/commit/PR creation against your
+  configured repo. The `DataHubClient` interface calling actual DataHub
+  MCP/GraphQL tool shapes (`search`, `get_entities`, `get_lineage`, etc.).
+  The LangGraph state machine and checkpointing. SQL fix generation (a
+  deterministic AST transform via `sqlglot`, not LLM-freehand — a live
+  demo depending on an LLM to hand-write correct SQL is a real
+  hallucination risk this build deliberately avoids). Root-cause file
+  attribution (cross-referenced against real DataHub lineage AND a live
+  GitHub code search — not either signal alone).
+- **Mocked by default, real when configured:** the DataHub instance itself
+  (`DATAHUB_MODE=mock` ships as the default so the demo never depends on
+  infra uptime — flipping to `real` requires only env vars, no code
+  changes).
+- **Deferred, not built:** Postgres persistence, the 3 non-primary
+  incident types (column renamed/type changed/freshness breach — visibly
+  disabled in the UI, not fake-wired), a full LLM eval framework, the
+  replacement-column detection branch in `generate_fix`. Each is in
+  `TODOS.md` with the reasoning for why it was cut and what picking it up
+  would take.
+
+## Future improvements
+
+See `TODOS.md` — Postgres persistence, the other 3 incident types, and
+replacement-column detection are the three highest-value next steps, each
+already scoped with context for whoever picks them up.
+
+## License
+
+Apache 2.0 — see `LICENSE`.

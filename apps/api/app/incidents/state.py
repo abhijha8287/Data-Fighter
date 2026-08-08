@@ -56,7 +56,8 @@ class RootCause(TypedDict):
 
 class ProposedFix(TypedDict):
     branch_taken: Literal["removal", "no_fix_needed"]
-    files: dict[str, str]  # path -> new file content
+    files: dict[str, str]  # path -> new (fixed) file content
+    files_before: dict[str, str]  # path -> original file content, for the PR/UI diff view
     explanation: str
 
 
@@ -86,6 +87,7 @@ class IncidentState(TypedDict, total=False):
     dataset_urn: str
     incident_type: str
     incident_description: str
+    affected_column: str | None  # only meaningful for incident_type="column_deleted"
     status: IncidentStatus
     error: str | None
 
