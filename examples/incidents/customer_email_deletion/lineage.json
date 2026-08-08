@@ -1,0 +1,131 @@
+{
+  "incident": {
+    "incident_type": "column_deleted",
+    "dataset_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers,PROD)",
+    "column": "customer_email",
+    "description": "customer_email column removed from analytics.customers during an upstream schema cleanup"
+  },
+  "entities": {
+    "urn:li:dataset:(urn:li:dataPlatform:snowflake,raw.customers,PROD)": {
+      "name": "raw.customers",
+      "platform": "snowflake",
+      "entity_type": "dataset",
+      "sql_file": "raw_customers.sql",
+      "owner": "Data Engineering",
+      "description": "Raw ingestion from the source CRM system."
+    },
+    "urn:li:dataset:(urn:li:dataPlatform:snowflake,staging.customers,PROD)": {
+      "name": "staging.customers",
+      "platform": "snowflake",
+      "entity_type": "dataset",
+      "sql_file": "staging_customers.sql",
+      "owner": "Data Engineering",
+      "description": "Cleaned/deduped customer records."
+    },
+    "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers,PROD)": {
+      "name": "analytics.customers",
+      "platform": "snowflake",
+      "entity_type": "dataset",
+      "sql_file": "analytics_customers.sql",
+      "owner": "Data Engineering",
+      "description": "Canonical customer dimension table used across analytics."
+    },
+    "urn:li:dataset:(urn:li:dataPlatform:snowflake,customer_metrics,PROD)": {
+      "name": "customer_metrics",
+      "platform": "snowflake",
+      "entity_type": "dataset",
+      "asset_category": "pipeline",
+      "sql_file": "customer_metrics.sql",
+      "owner": "Analytics Engineering",
+      "description": "Per-customer spend and order aggregates."
+    },
+    "urn:li:dataset:(urn:li:dataPlatform:snowflake,customer_segmentation,PROD)": {
+      "name": "customer_segmentation",
+      "platform": "snowflake",
+      "entity_type": "dataset",
+      "asset_category": "pipeline",
+      "sql_file": "customer_segmentation.sql",
+      "owner": "Analytics Engineering",
+      "description": "Customer segments by email domain and geography."
+    },
+    "urn:li:dataset:(urn:li:dataPlatform:snowflake,customer_features,PROD)": {
+      "name": "customer_features",
+      "platform": "snowflake",
+      "entity_type": "dataset",
+      "asset_category": "pipeline",
+      "sql_file": "customer_features.sql",
+      "owner": "ML Platform",
+      "description": "Feature table feeding the churn model."
+    },
+    "urn:li:chart:(looker,revenue_dashboard)": {
+      "name": "revenue_dashboard",
+      "platform": "looker",
+      "entity_type": "chart",
+      "asset_category": "dashboard",
+      "sql_file": "revenue_dashboard.sql",
+      "owner": "Analytics Engineering",
+      "description": "Weekly revenue and active-customer dashboard."
+    },
+    "urn:li:chart:(looker,customer_dashboard)": {
+      "name": "customer_dashboard",
+      "platform": "looker",
+      "entity_type": "chart",
+      "asset_category": "dashboard",
+      "sql_file": "customer_dashboard.sql",
+      "owner": "Analytics Engineering",
+      "description": "Ops-facing customer segment view."
+    },
+    "urn:li:mlModel:(urn:li:dataPlatform:sagemaker,churn_model,PROD)": {
+      "name": "churn_model",
+      "platform": "sagemaker",
+      "entity_type": "mlModel",
+      "asset_category": "ml_model",
+      "sql_file": "churn_model.sql",
+      "owner": "ML Platform",
+      "description": "Predicts 90-day customer churn."
+    }
+  },
+  "lineage_edges": [
+    ["urn:li:dataset:(urn:li:dataPlatform:snowflake,raw.customers,PROD)", "urn:li:dataset:(urn:li:dataPlatform:snowflake,staging.customers,PROD)"],
+    ["urn:li:dataset:(urn:li:dataPlatform:snowflake,staging.customers,PROD)", "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers,PROD)"],
+    ["urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers,PROD)", "urn:li:dataset:(urn:li:dataPlatform:snowflake,customer_metrics,PROD)"],
+    ["urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers,PROD)", "urn:li:dataset:(urn:li:dataPlatform:snowflake,customer_segmentation,PROD)"],
+    ["urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers,PROD)", "urn:li:dataset:(urn:li:dataPlatform:snowflake,customer_features,PROD)"],
+    ["urn:li:dataset:(urn:li:dataPlatform:snowflake,customer_metrics,PROD)", "urn:li:chart:(looker,revenue_dashboard)"],
+    ["urn:li:dataset:(urn:li:dataPlatform:snowflake,customer_segmentation,PROD)", "urn:li:chart:(looker,customer_dashboard)"],
+    ["urn:li:dataset:(urn:li:dataPlatform:snowflake,customer_features,PROD)", "urn:li:mlModel:(urn:li:dataPlatform:sagemaker,churn_model,PROD)"]
+  ],
+  "schema_before": {
+    "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers,PROD)": [
+      {"field_path": "customer_id", "type": "STRING", "nullable": false},
+      {"field_path": "customer_email", "type": "STRING", "nullable": false},
+      {"field_path": "first_name", "type": "STRING", "nullable": true},
+      {"field_path": "last_name", "type": "STRING", "nullable": true},
+      {"field_path": "signup_ts", "type": "TIMESTAMP", "nullable": false},
+      {"field_path": "country_code", "type": "STRING", "nullable": true}
+    ]
+  },
+  "schema_after": {
+    "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers,PROD)": [
+      {"field_path": "customer_id", "type": "STRING", "nullable": false},
+      {"field_path": "first_name", "type": "STRING", "nullable": true},
+      {"field_path": "last_name", "type": "STRING", "nullable": true},
+      {"field_path": "signup_ts", "type": "TIMESTAMP", "nullable": false},
+      {"field_path": "country_code", "type": "STRING", "nullable": true}
+    ]
+  },
+  "owners": {
+    "Data Engineering": {
+      "team": "Data Engineering",
+      "contact": "data-eng@example.com"
+    },
+    "Analytics Engineering": {
+      "team": "Analytics Engineering",
+      "contact": "analytics-eng@example.com"
+    },
+    "ML Platform": {
+      "team": "ML Platform",
+      "contact": "ml-platform@example.com"
+    }
+  }
+}

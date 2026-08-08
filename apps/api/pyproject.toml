@@ -1,0 +1,38 @@
+[project]
+name = "data-firefighter-api"
+version = "0.1.0"
+description = "Data Firefighter — autonomous data incident response agent (backend)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "langgraph>=0.2.60",
+    "langgraph-checkpoint-sqlite>=2.0",
+    "langchain-openai>=0.2.14",
+    "langchain-anthropic>=0.3.0",
+    "langchain-core>=0.3.28",
+    "sqlglot>=25.34",
+    "httpx>=0.28",
+    "python-dotenv>=1.0",
+    "pygithub>=2.9.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[build-system]
+requires = ["uv_build>=0.12.0,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "app"
+module-root = ""
