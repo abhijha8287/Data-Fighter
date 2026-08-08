@@ -19,6 +19,8 @@ npm-debug.log*
 
 # Data / state
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 checkpoints.db
