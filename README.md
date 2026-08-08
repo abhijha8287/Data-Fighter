@@ -38,24 +38,45 @@ default action.
 
 ## Why DataHub
 
-DataHub is the agent's context graph at every stage. `DATAHUB_MODE` selects
-which of two real implementations of the same `DataHubClient` interface the
-agent uses — **there is no silent fallback between them**: if
-`DATAHUB_MODE=real` and DataHub is unreachable, the incident fails with an
-explicit error (`DataHub unreachable... Check DATAHUB_GMS_URL, or try
-DATAHUB_MODE=mock`), it never quietly serves mock data instead.
+DataHub is the agent's context graph at every stage:
 
-- **`DATAHUB_MODE=real`** — `RealDataHubClient` (`app/datahub/real.py`)
-  makes actual GraphQL calls against a running DataHub GMS instance:
-  entity lookup, lineage traversal, and ownership resolution all come back
-  from DataHub itself. Query shapes were verified against DataHub's real
-  GraphQL SDL (`datahub-graphql-core/entity.graphql`), not guessed.
-- **`DATAHUB_MODE=mock`** (default) — `MockDataHubClient`
-  (`app/datahub/mock.py`) is a deterministic demo adapter implementing the
-  identical interface against fixture data in
-  `examples/incidents/customer_email_deletion/`. It exists so the demo
-  never depends on infrastructure being up, and switching to `real`
-  requires only an env var — zero code changes anywhere else in the app.
+- **Schema** — `get_dataset`/`get_schema` read the incident dataset's real
+  schema (DataHub's `schemaMetadata` aspect) to know exactly what changed.
+- **Lineage** — `get_lineage` traces every downstream pipeline, dashboard,
+  and ML model affected via DataHub's lineage graph — the blast radius is
+  *calculated* from real graph traversal, never hardcoded.
+- **Ownership** — `get_owners` resolves the real CorpGroup/CorpUser owner
+  of each asset from DataHub's `ownership` aspect, so the right teams are
+  identified, not guessed.
+- **Root cause** — cross-references DataHub's lineage graph against a live
+  GitHub code search: a file only counts as "affected" if it's *both*
+  downstream of the incident dataset in DataHub *and* actually references
+  the deleted column in the real repo — two independent signals
+  corroborating each other, not either alone.
+- **Write-back** — resolved incidents get written back to DataHub
+  (`updateDescription`, gated behind `DATAHUB_MUTATION_ENABLED` and the
+  server's own `TOOLS_IS_MUTATION_ENABLED`), so the next agent or engineer
+  inherits the investigation instead of repeating it.
+
+### `DATAHUB_MODE=real` vs. `DATAHUB_MODE=mock`
+
+`DATAHUB_MODE` selects which of two real implementations of the same
+`DataHubClient` interface the agent uses — **there is no silent fallback
+between them**: if `DATAHUB_MODE=real` and DataHub is unreachable, the
+incident fails with an explicit error (`DataHub unreachable... Check
+DATAHUB_GMS_URL, or try DATAHUB_MODE=mock`); it never quietly serves mock
+data instead.
+
+- **`real`** — `RealDataHubClient` (`app/datahub/real.py`) makes actual
+  GraphQL calls against a running DataHub GMS instance for every bullet
+  above. Query shapes were verified against DataHub's real GraphQL SDL
+  (`datahub-graphql-core/entity.graphql` on GitHub), not guessed.
+- **`mock`** (default) — `MockDataHubClient` (`app/datahub/mock.py`) is a
+  deterministic demo adapter implementing the identical interface against
+  fixture data in `examples/incidents/customer_email_deletion/`. It exists
+  so the demo never depends on infrastructure being up, and switching to
+  `real` requires only an env var — zero code changes anywhere else in
+  the app.
 
 **The recorded demo runs in `DATAHUB_MODE=mock`.** Local DataHub Quickstart
 (the official `docker compose` stack) was attempted twice and failed both
@@ -64,21 +85,6 @@ downloading `acryldata/datahub-actions` — not a bug in this project's
 DataHub integration. `RealDataHubClient` has real, unit-tested query logic
 (`apps/api/tests/test_datahub_real.py`, mocked GraphQL responses) but has
 not been exercised against a live GMS instance as part of this submission.
-
-- **Schema** — `list_schema_fields` / `get_entities` to know exactly what
-  changed on the incident dataset.
-- **Lineage** — `get_lineage` to trace every downstream pipeline,
-  dashboard, and ML model affected — the blast radius is *calculated* from
-  real graph traversal, never hardcoded.
-- **Ownership** — resolved per-asset so the right teams are identified.
-- **Query metadata** — `get_dataset_queries` grounds root-cause claims in
-  real SQL, cross-referenced against a live GitHub code search so the
-  agent never blames a file that isn't actually broken.
-- **Write-back** — resolved incidents get written back to DataHub
-  (`update_description`/`save_document`, gated behind
-  `DATAHUB_MUTATION_ENABLED` and the server's own
-  `TOOLS_IS_MUTATION_ENABLED`), so the next agent or engineer inherits the
-  investigation instead of repeating it.
 
 ## Architecture
 
