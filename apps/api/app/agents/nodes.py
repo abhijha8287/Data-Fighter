@@ -54,13 +54,23 @@ class Nodes:
         urn = state["dataset_urn"]
         try:
             dataset_metadata = await self.datahub.get_dataset(urn)
-            schema_before = await self.datahub.get_schema(urn, before_incident=True)
             schema_after = await self.datahub.get_schema(urn, before_incident=False)
         except DataHubUnavailableError as exc:
             return _fail(
                 f"DataHub unreachable while fetching context for {urn}: {exc}. "
                 "Check DATAHUB_GMS_URL, or try DATAHUB_MODE=mock."
             )
+        try:
+            schema_before = await self.datahub.get_schema(urn, before_incident=True)
+        except DataHubUnavailableError:
+            # schema_before is unused by every downstream node (only the
+            # replacement-column branch needed it, and that branch was cut
+            # — see the design doc). MockDataHubClient always returns real
+            # before/after fixture data; RealDataHubClient documents this
+            # as unsupported (no historical schema versioning guarantee).
+            # An empty list is the honest "not available" signal — not a
+            # fabricated substitute for real data.
+            schema_before = []
         return {
             "status": IncidentStatus.INVESTIGATING.value,
             "dataset_metadata": dataset_metadata,

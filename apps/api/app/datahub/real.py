@@ -16,12 +16,77 @@ other write failure (logged, returns False, never raises).
 
 from __future__ import annotations
 
+import re
+
 import httpx
 
 from app.datahub.client import DataHubClient, DataHubUnavailableError
 from app.incidents.state import SchemaField
 
 _TIMEOUT = httpx.Timeout(10.0, connect=5.0)
+
+# Real GraphQL query roots and the entity-type string trace_lineage/nodes.py
+# expect on the returned dict. Verified against DataHub's actual GraphQL SDL
+# (datahub-graphql-core/src/main/resources/entity.graphql on GitHub) — not
+# guessed. Dataset and Chart both directly expose name/type/platform/
+# ownership on the entity itself; both were confirmed field-by-field.
+_ENTITY_TYPE_FROM_URN_PREFIX = {
+    "urn:li:dataset:": "dataset",
+    "urn:li:chart:": "chart",
+    "urn:li:mlModel:": "mlModel",
+}
+
+# Downstream-consumer categorization our app applies on top of DataHub's
+# real entity_type — the same categorization MockDataHubClient's fixture
+# data hand-assigns per asset. Not a DataHub-native field; a display bucket
+# this app defines, applied consistently to real entity_type values.
+_ASSET_CATEGORY_BY_ENTITY_TYPE = {"dataset": "pipeline", "chart": "dashboard", "mlModel": "ml_model"}
+
+_MLMODEL_URN_RE = re.compile(r"^urn:li:mlModel:\(urn:li:dataPlatform:([^,]+),([^,]+),[^)]+\)$")
+
+
+def _entity_type_of(urn: str) -> str:
+    for prefix, etype in _ENTITY_TYPE_FROM_URN_PREFIX.items():
+        if urn.startswith(prefix):
+            return etype
+    raise DataHubUnavailableError(f"unrecognized entity type for urn: {urn}")
+
+
+def _mlmodel_name_and_platform_from_urn(urn: str) -> tuple[str | None, str | None]:
+    """MLModel's GraphQL type fields aren't documented in DataHub's public
+    schema reference the way Dataset/Chart are, so rather than guess field
+    names that could break the whole query if wrong, name/platform are
+    parsed from the URN DataHub itself returned — the URN is real data,
+    self-describing by DataHub's own construction (matches
+    make_ml_model_urn's format exactly), not a fabricated substitute."""
+    match = _MLMODEL_URN_RE.match(urn)
+    if not match:
+        return None, None
+    platform, name = match.groups()
+    return name, platform
+
+
+def _first_owner_name(ownership: dict | None) -> str | None:
+    if not ownership:
+        return None
+    for o in ownership.get("owners") or []:
+        owner_obj = (o or {}).get("owner") or {}
+        name = owner_obj.get("name") or owner_obj.get("username")
+        if name:
+            return name
+    return None
+
+
+_OWNERSHIP_FRAGMENT = """
+ownership {
+  owners {
+    owner {
+      ... on CorpGroup { name }
+      ... on CorpUser { username }
+    }
+  }
+}
+"""
 
 
 class RealDataHubClient(DataHubClient):
@@ -48,26 +113,80 @@ class RealDataHubClient(DataHubClient):
         return payload.get("data", {})
 
     async def get_dataset(self, urn: str) -> dict:
-        data = await self._graphql(
-            """
-            query getDataset($urn: String!) {
-              dataset(urn: $urn) {
-                urn
-                name
-                platform { name }
-                properties { description }
-                ownership { owners { owner { ... on CorpGroup { name } } } }
-              }
-            }
-            """,
-            {"urn": urn},
-        )
-        ds = data.get("dataset") or {}
+        """Returns the shape trace_lineage/fetch_context expect: urn, name,
+        platform, entity_type, asset_category, owner, description. Branches
+        on entity type (derived locally from the URN prefix — zero API
+        risk) since DataHub's GraphQL query root differs per type
+        (`dataset(urn)`, `chart(urn)`, `mlModel(urn)`) and Dataset/Chart's
+        confirmed real fields (name, platform, ownership) aren't guaranteed
+        identical on MLModel."""
+        etype = _entity_type_of(urn)
+
+        if etype == "dataset":
+            data = await self._graphql(
+                f"""
+                query getDataset($urn: String!) {{
+                  dataset(urn: $urn) {{
+                    urn
+                    name
+                    platform {{ name }}
+                    properties {{ description }}
+                    {_OWNERSHIP_FRAGMENT}
+                  }}
+                }}
+                """,
+                {"urn": urn},
+            )
+            entity = data.get("dataset")
+        elif etype == "chart":
+            data = await self._graphql(
+                f"""
+                query getChart($urn: String!) {{
+                  chart(urn: $urn) {{
+                    urn
+                    name
+                    platform {{ name }}
+                    properties {{ description }}
+                    {_OWNERSHIP_FRAGMENT}
+                  }}
+                }}
+                """,
+                {"urn": urn},
+            )
+            entity = data.get("chart")
+        else:  # mlModel
+            data = await self._graphql(
+                f"""
+                query getMlModel($urn: String!) {{
+                  mlModel(urn: $urn) {{
+                    urn
+                    {_OWNERSHIP_FRAGMENT}
+                  }}
+                }}
+                """,
+                {"urn": urn},
+            )
+            entity = data.get("mlModel")
+
+        if not entity:
+            raise DataHubUnavailableError(f"entity not found in DataHub: {urn}")
+
+        if etype == "mlModel":
+            name, platform = _mlmodel_name_and_platform_from_urn(urn)
+            description = None
+        else:
+            name = entity.get("name")
+            platform = (entity.get("platform") or {}).get("name")
+            description = (entity.get("properties") or {}).get("description")
+
         return {
-            "urn": ds.get("urn", urn),
-            "name": ds.get("name"),
-            "platform": (ds.get("platform") or {}).get("name"),
-            "description": (ds.get("properties") or {}).get("description"),
+            "urn": entity.get("urn", urn),
+            "name": name,
+            "platform": platform,
+            "entity_type": etype,
+            "asset_category": _ASSET_CATEGORY_BY_ENTITY_TYPE.get(etype),
+            "owner": _first_owner_name(entity.get("ownership")),
+            "description": description,
         }
 
     async def get_schema(self, urn: str, *, before_incident: bool = False) -> list[SchemaField]:
@@ -121,8 +240,12 @@ class RealDataHubClient(DataHubClient):
         return {"paths": []}
 
     async def get_owners(self, urn: str) -> list[dict]:
+        # Reuses get_dataset's real ownership extraction rather than
+        # re-querying — get_dataset already resolves the CorpGroup/CorpUser
+        # owner name from DataHub's actual ownership aspect.
         ds = await self.get_dataset(urn)
-        return [{"team": ds.get("name")}] if ds.get("name") else []
+        owner = ds.get("owner")
+        return [{"team": owner}] if owner else []
 
     async def search_datasets(self, query: str) -> list[dict]:
         data = await self._graphql(

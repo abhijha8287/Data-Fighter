@@ -38,7 +38,32 @@ default action.
 
 ## Why DataHub
 
-DataHub is the agent's context graph at every stage:
+DataHub is the agent's context graph at every stage. `DATAHUB_MODE` selects
+which of two real implementations of the same `DataHubClient` interface the
+agent uses — **there is no silent fallback between them**: if
+`DATAHUB_MODE=real` and DataHub is unreachable, the incident fails with an
+explicit error (`DataHub unreachable... Check DATAHUB_GMS_URL, or try
+DATAHUB_MODE=mock`), it never quietly serves mock data instead.
+
+- **`DATAHUB_MODE=real`** — `RealDataHubClient` (`app/datahub/real.py`)
+  makes actual GraphQL calls against a running DataHub GMS instance:
+  entity lookup, lineage traversal, and ownership resolution all come back
+  from DataHub itself. Query shapes were verified against DataHub's real
+  GraphQL SDL (`datahub-graphql-core/entity.graphql`), not guessed.
+- **`DATAHUB_MODE=mock`** (default) — `MockDataHubClient`
+  (`app/datahub/mock.py`) is a deterministic demo adapter implementing the
+  identical interface against fixture data in
+  `examples/incidents/customer_email_deletion/`. It exists so the demo
+  never depends on infrastructure being up, and switching to `real`
+  requires only an env var — zero code changes anywhere else in the app.
+
+**The recorded demo runs in `DATAHUB_MODE=mock`.** Local DataHub Quickstart
+(the official `docker compose` stack) was attempted twice and failed both
+times on Docker Hub image-pull failures — a `TLS handshake timeout`
+downloading `acryldata/datahub-actions` — not a bug in this project's
+DataHub integration. `RealDataHubClient` has real, unit-tested query logic
+(`apps/api/tests/test_datahub_real.py`, mocked GraphQL responses) but has
+not been exercised against a live GMS instance as part of this submission.
 
 - **Schema** — `list_schema_fields` / `get_entities` to know exactly what
   changed on the incident dataset.
@@ -148,17 +173,31 @@ output for the actual URL, and update `FRONTEND_ORIGINS` in the backend's
 ### 4. DataHub setup
 
 Default mode (`DATAHUB_MODE=mock`) needs no DataHub instance — the agent
-runs against realistic fixture data with the exact same `DataHubClient`
-interface a real instance would use.
+runs against realistic fixture data through the exact same `DataHubClient`
+interface a real instance would use, and this is what the recorded demo
+uses (see "Why DataHub" above for exactly why).
 
 To run against a real instance:
 
 ```bash
-python3 -m datahub docker quickstart   # official DataHub quickstart
+uv tool install acryl-datahub
+datahub docker quickstart   # official DataHub quickstart
 ```
 
 Then set `DATAHUB_MODE=real`, `DATAHUB_GMS_URL=http://localhost:8080`, and
-a personal access token as `DATAHUB_GMS_TOKEN`.
+a personal access token as `DATAHUB_GMS_TOKEN`. `scripts/seed_datahub.py`
+seeds the same customer_email_deletion scenario into a running instance
+via DataHub's real Python SDK emitter (not by loading the fixture into the
+mock adapter):
+
+```bash
+uv run --with acryl-datahub python3 scripts/seed_datahub.py --gms-url http://localhost:8080
+```
+
+Note: Quickstart downloads several GB of Docker images (mysql, opensearch,
+kafka, and DataHub's own services) — an unreliable network connection to
+Docker Hub can cause it to fail on large image pulls, which is what
+happened during this submission's development (see "Why DataHub" above).
 
 ### 5. GitHub setup
 
@@ -182,24 +221,31 @@ curl -X POST http://localhost:8000/api/incidents/demo
 
 ```bash
 cd apps/api
-uv run pytest        # 52 tests: unit, API, full-graph e2e, golden-file eval
+uv run pytest        # 67 tests: unit, API, full-graph e2e, golden-file eval,
+                      # RealDataHubClient (mocked GraphQL, no live instance needed)
 ```
 
 ## What's genuinely real vs. mocked
 
-- **Real, always:** GitHub branch/commit/PR creation against your
-  configured repo. The `DataHubClient` interface calling actual DataHub
-  MCP/GraphQL tool shapes (`search`, `get_entities`, `get_lineage`, etc.).
-  The LangGraph state machine and checkpointing. SQL fix generation (a
-  deterministic AST transform via `sqlglot`, not LLM-freehand — a live
-  demo depending on an LLM to hand-write correct SQL is a real
-  hallucination risk this build deliberately avoids). Root-cause file
-  attribution (cross-referenced against real DataHub lineage AND a live
-  GitHub code search — not either signal alone).
-- **Mocked by default, real when configured:** the DataHub instance itself
-  (`DATAHUB_MODE=mock` ships as the default so the demo never depends on
-  infra uptime — flipping to `real` requires only env vars, no code
-  changes).
+- **Real, always, regardless of `DATAHUB_MODE`:** GitHub branch/commit/PR
+  creation against your configured repo. The LangGraph state machine and
+  checkpointing. SQL fix generation (a deterministic AST transform via
+  `sqlglot`, not LLM-freehand — a live demo depending on an LLM to
+  hand-write correct SQL is a real hallucination risk this build
+  deliberately avoids). Root-cause file attribution (cross-referenced
+  against DataHub lineage AND a live GitHub code search — not either
+  signal alone).
+- **Real when `DATAHUB_MODE=real`:** `RealDataHubClient` makes actual
+  GraphQL calls against a running DataHub GMS — entity metadata, lineage,
+  and ownership all come back from DataHub itself, query shapes verified
+  against DataHub's real GraphQL schema. Unit-tested against mocked GraphQL
+  responses (`apps/api/tests/test_datahub_real.py`); not yet exercised
+  against a live instance in this submission (see "Why DataHub").
+- **Deterministic fixture data when `DATAHUB_MODE=mock`** (the recorded
+  demo's setting): `MockDataHubClient` serves the same interface from
+  `examples/incidents/customer_email_deletion/` fixtures. No silent
+  fallback between the two modes — a `real`-mode failure surfaces as an
+  explicit error, never a quiet switch to fixture data.
 - **Deferred, not built:** Postgres persistence, the 3 non-primary
   incident types (column renamed/type changed/freshness breach — visibly
   disabled in the UI, not fake-wired), a full LLM eval framework, the

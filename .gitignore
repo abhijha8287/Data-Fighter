@@ -32,3 +32,11 @@ checkpoints.db
 .vscode/
 .idea/
 .gstack/
+
+# Local tooling state (not project source)
+.claude/
+
+# Throwaway seeded GitHub demo repo clone — a separate repo the agent opens
+# real PRs against, not part of this project's source (has its own .git,
+# must never be tracked as a submodule/gitlink here)
+/data-firefighter-demo/
