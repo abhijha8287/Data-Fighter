@@ -146,7 +146,6 @@ checkpointer, keyed by `thread_id=incident_id`.
 
 ```bash
 cd apps/api
-cp ../../.env.example .env   # fill in the values below
 uv sync
 uv run uvicorn app.main:app --reload --port 8000
 ```
@@ -155,7 +154,6 @@ uv run uvicorn app.main:app --reload --port 8000
 
 ```bash
 cd apps/web
-cp .env.local.example .env.local
 npm install
 npm run dev
 ```
