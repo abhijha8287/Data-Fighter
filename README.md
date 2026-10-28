@@ -1,40 +1,69 @@
 # Data Firefighter
 
-**Autonomous data incident response, built on DataHub's context graph.**
+An agent that investigates a data incident (for example, a deleted column), traces what it breaks through DataHub lineage, and opens a fix PR after a human approves.
 
-When a column disappears from a dataset, Data Firefighter investigates the
-blast radius, finds the root cause, proposes a fix grounded in the actual
-affected code, and opens a real GitHub PR — pausing for human approval
-before it touches anything.
+## Why this exists
+Built for the DataHub "Build with DataHub: The Agent Hackathon". A schema change on one dataset can silently break every pipeline, dashboard and model downstream, and finding out what broke is usually a manual, multi-tool search. This automates the investigation using DataHub as the source of lineage, schema and ownership.
 
-Built for **Build with DataHub: The Agent Hackathon**.
+## What it does
+- Runs an 11-step LangGraph workflow: detect incident → fetch context → trace lineage → blast radius → owners → root cause → generate fix → validate fix → create PR → incident report → write back to DataHub
+- Pauses for explicit human approval before it touches GitHub (it is not fully autonomous)
+- Keeps agent state in a SQLite checkpoint so the run can resume after approval
+- Works against mock DataHub fixtures by default, or a real DataHub instance
+- Shows the investigation and approval step in a Next.js dashboard
 
----
-
-## Problem
-
-A schema change on one dataset silently breaks every pipeline, dashboard,
-and ML model downstream of it. Today, finding out what broke and why is a
-manual, multi-tool investigation. Data Firefighter automates that
-investigation end-to-end using DataHub as its context graph — not a search
-box the agent occasionally queries, but the actual source of lineage,
-schema, and ownership it reasons over.
-
-## Solution
-
-An 11-node [LangGraph](https://langchain-ai.github.io/langgraph/) agent:
-
+## Project structure
 ```
-detect_incident → fetch_context → trace_lineage → analyze_blast_radius →
-identify_owners → investigate_root_cause → generate_fix → validate_fix →
-create_pull_request → write_incident_report → write_back_to_datahub
+Data-Fighter/
+├── apps/
+│   ├── api/
+│   │   ├── app/agents/     LangGraph nodes and graph
+│   │   ├── app/api/        FastAPI routes
+│   │   ├── app/datahub/    DataHub client (mock and real)
+│   │   ├── app/github/     Code search and PR creation
+│   │   ├── app/incidents/  Incident models and storage
+│   │   └── tests/          Unit and eval tests
+│   └── web/                Next.js dashboard
+├── examples/incidents/     Demo incident fixture files
+├── scripts/                DataHub seeding script
+├── TODOS.md                Open work items
+└── .env.example            Required settings
 ```
 
-The graph is **human-checkpointed, not fully autonomous**: it investigates
-and proposes a fix on its own, but pauses for explicit approval before it
-ever touches GitHub. This mirrors the hackathon brief's own principle that
-PR creation — not direct production changes — should be the agent's
-default action.
+## Getting started
+Requirements: Python 3.12+ with `uv`, Node.js 18+, a GitHub token and a throwaway repo seeded with `examples/incidents/customer_email_deletion`.
+```bash
+git clone https://github.com/abhijha8287/Data-Fighter.git
+cd Data-Fighter
+cp .env.example apps/api/.env          # fill in the values below
+
+cd apps/api
+uv sync
+uv run uvicorn app.main:app --reload --port 8000
+
+cd ../web                              # in a second terminal
+npm install
+npm run dev
+```
+
+## Configuration
+| Variable | Purpose |
+|:--|:--|
+| `LLM_PROVIDER` | `openai` or `anthropic` |
+| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | Key for the chosen provider |
+| `DATAHUB_MODE` | `mock` (default) or `real` |
+| `DATAHUB_GMS_URL`, `DATAHUB_GMS_TOKEN` | Only for `DATAHUB_MODE=real` |
+| `DATAHUB_MUTATION_ENABLED` | Allows writing results back to DataHub |
+| `GITHUB_TOKEN` | Needed in every mode: the agent searches and opens PRs |
+| `GITHUB_DEMO_REPO` | `owner/repo` the agent works on |
+| `CHECKPOINT_DB_PATH` | SQLite file for agent checkpoints |
+| `FRONTEND_ORIGINS` | Allowed frontend URLs (comma-separated) |
+
+## Tech stack
+Python, LangGraph, LangChain (OpenAI / Anthropic), FastAPI, DataHub, PyGithub, SQLite, Next.js, TypeScript, Tailwind CSS
+
+## Notes
+Demo data lives in [data-firefighter-demo](https://github.com/abhijha8287/data-firefighter-demo). MIT licensed.
 
 ## Why DataHub
 
@@ -120,27 +149,7 @@ Three checkpoints, mapped onto three API calls a human explicitly triggers:
 State persists across these calls via LangGraph's `AsyncSqliteSaver`
 checkpointer, keyed by `thread_id=incident_id`.
 
-## Demo
-
-1. Open the dashboard, click **Column Deleted** under Simulate Incident.
-2. Investigation runs automatically (read-only — no writes) and shows the
-   real blast radius: downstream pipelines, dashboards, an ML model, and
-   the teams that own them.
-3. Click **Generate Fix** — review the real before/after SQL diff and
-   validation checklist.
-4. Click **Approve & Create PR** — a real branch, commit, and PR land on
-   your configured GitHub repo. The incident resolves; DataHub write-back
-   is attempted (visibly marked if disabled, never faked).
-
-## Tech stack
-
-- **Backend:** Python, FastAPI, LangGraph, Pydantic, `sqlglot`
-- **Frontend:** Next.js, TypeScript, Tailwind CSS
-- **LLM:** OpenAI or Anthropic, switched via `LLM_PROVIDER`
-- **Persistence:** LangGraph `AsyncSqliteSaver` (no Postgres/SQLAlchemy in
-  this build — see `TODOS.md` for why and what it'd take to add)
-
-## Setup
+## Setup details
 
 ### 1. Backend
 
@@ -262,7 +271,3 @@ uv run pytest        # 67 tests: unit, API, full-graph e2e, golden-file eval,
 See `TODOS.md` — Postgres persistence, the other 3 incident types, and
 replacement-column detection are the three highest-value next steps, each
 already scoped with context for whoever picks them up.
-
-## License
-
-Apache 2.0 — see `LICENSE`.
