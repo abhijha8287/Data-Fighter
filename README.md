@@ -271,3 +271,14 @@ uv run pytest        # 67 tests: unit, API, full-graph e2e, golden-file eval,
 See `TODOS.md` — Postgres persistence, the other 3 incident types, and
 replacement-column detection are the three highest-value next steps, each
 already scoped with context for whoever picks them up.
+## Demo
+
+1. Open the dashboard, click **Column Deleted** under Simulate Incident.
+2. Investigation runs automatically (read-only — no writes) and shows the
+   real blast radius: downstream pipelines, dashboards, an ML model, and
+   the teams that own them.
+3. Click **Generate Fix** — review the real before/after SQL diff and
+   validation checklist.
+4. Click **Approve & Create PR** — a real branch, commit, and PR land on
+   your configured GitHub repo. The incident resolves; DataHub write-back
+   is attempted (visibly marked if disabled, never faked).
